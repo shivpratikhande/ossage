@@ -3,6 +3,6 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const cdp = new CdpClient();
-const account = await cdp.evm.createAccount();
-console.log(`Created EVM account: ${account.address}`);
+const cdp = new CdpClient();       
+const account = await cdp.solana.createAccount();
+console.log(`Created Solana account: ${account.address}`);
