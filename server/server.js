@@ -3,6 +3,7 @@ const bodyParser = require("body-parser");
 const crypto = require("crypto");
 
 const app = express();
+
 const PORT = 3000;
 const WEBHOOK_SECRET = "your_webhook_secret";
 
@@ -10,6 +11,7 @@ app.use(bodyParser.json());
 
 app.post("/webhook", (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
+
   const payload = JSON.stringify(req.body);
 
   const hmac = crypto.createHmac("sha256", WEBHOOK_SECRET);
@@ -25,6 +27,7 @@ app.post("/webhook", (req, res) => {
     const pr = req.body.pull_request;
     const contributor = pr.user.login;
     const additions = pr.additions;
+    
     const deletions = pr.deletions;
     const filesChanged = pr.changed_files;
 
