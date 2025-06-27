@@ -1,88 +1,97 @@
-import {
+// sendSolanaTransaction.js
+
+const {
   Connection,
   PublicKey,
   SystemProgram,
   Transaction,
-} from "@solana/web3.js";
-import { CdpClient } from "@coinbase/cdp-sdk";
-import dotenv from "dotenv";
+} = require("@solana/web3.js");
+const { CdpClient } = require("@coinbase/cdp-sdk");
+const dotenv = require("dotenv");
 
 dotenv.config();
 
 const cdp = new CdpClient();
 const connection = new Connection("https://api.devnet.solana.com");
 
-const senderAddress = "AeDZDyX4pc4Pcr8SspWzYYpeLQahy1cqkdGmRVzTXvbs";
-const recipientAddress = "532AY6h9d5qEHBYenLTq51yF994kUFcGMdmQ4x9bGinu";
-
-async function sendTransaction(fromAddr) {
-  const fromPublicKey = new PublicKey(fromAddr);
-  const toPublicKey = new PublicKey(recipientAddress);
-
-  // Check balances before sending
-  const senderBalance = await connection.getBalance(fromPublicKey);
-  const recipientBalance = await connection.getBalance(toPublicKey);
-
-  console.log(`Sender balance: ${senderBalance} lamports`);
-  console.log(`Recipient balance: ${recipientBalance} lamports`);
-
- const lamportsToSend = 2_100; 
-
-if (senderBalance < lamportsToSend) {
-  throw new Error("Sender has insufficient balance to send this amount");
-}
+const fromAddress = "AeDZDyX4pc4Pcr8SspWzYYpeLQahy1cqkdGmRVzTXvbs";
+const toAddress = "532AY6h9d5qEHBYenLTq51yF994kUFcGMdmQ4x9bGinu";
 
 
-  const { blockhash } = await connection.getLatestBlockhash();
-
-  const transaction = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: fromPublicKey,
-      toPubkey: toPublicKey,
-      lamports: lamportsToSend,
-    })
-  );
-
-  transaction.recentBlockhash = blockhash;
-  transaction.feePayer = fromPublicKey;
-
-  const serializedTx = Buffer.from(
-    transaction.serialize({ requireAllSignatures: false })
-  ).toString("base64");
-
-  const { signature: txSignature } = await cdp.solana.signTransaction({
-    address: fromAddr,
-    transaction: serializedTx,
-  });
-
-  const decodedSignedTx = Buffer.from(txSignature, "base64");
-
-  console.log("Sending transaction...");
-  const txSendSignature = await connection.sendRawTransaction(decodedSignedTx);
-
-  const latestBlockhash = await connection.getLatestBlockhash();
-
-  console.log("Waiting for transaction to be confirmed...");
-  const confirmation = await connection.confirmTransaction({
-    signature: txSendSignature,
-    blockhash: latestBlockhash.blockhash,
-    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-  });
-
-  if (confirmation.value.err) {
-    throw new Error(`Transaction failed: ${confirmation.value.err.toString()}`);
-  }
-
-  console.log(`✅ Transaction successful! View on explorer:`);
-  console.log(`https://explorer.solana.com/tx/${txSendSignature}?cluster=devnet`);
-}
-
-async function main() {
+/**
+ * Sends SOL from a Coinbase-managed wallet to another address.
+ * @param {string} fromAddress - The sender's public address
+ * @param {string} toAddress - The recipient's public address
+ * @param {number} lamportsToSend - Amount of lamports to send (default: 2100)
+ * @returns {Promise<string>} Transaction signature
+ */
+async function sendSolanaTransaction(fromAddress, toAddress, lamportsToSend = 40000000) {
   try {
-    await sendTransaction(senderAddress);
+    const fromPubKey = new PublicKey(fromAddress);
+    const toPubKey = new PublicKey(toAddress);
+
+    const senderBalance = await connection.getBalance(fromPubKey);
+    const recipientBalance = await connection.getBalance(toPubKey);
+
+    console.log(`Sender balance: ${senderBalance} lamports`);
+    console.log(`Recipient balance: ${recipientBalance} lamports`);
+
+    if (senderBalance < lamportsToSend) {
+      throw new Error("❌ Sender has insufficient balance.");
+    }
+
+    const { blockhash } = await connection.getLatestBlockhash();
+
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: fromPubKey,
+        toPubkey: toPubKey,
+        lamports: lamportsToSend,
+      })
+    );
+
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = fromPubKey;
+
+    const serializedTx = transaction.serialize({ requireAllSignatures: false });
+    const base64Tx = serializedTx.toString("base64");
+
+    const { signature: signedTx } = await cdp.solana.signTransaction({
+      address: fromAddress,
+      transaction: base64Tx,
+    });
+
+    const decodedSignedTx = Buffer.from(signedTx, "base64");
+
+    console.log("Sending transaction...");
+    const txSignature = await connection.sendRawTransaction(decodedSignedTx);
+
+    const latestBlockhash = await connection.getLatestBlockhash();
+
+    console.log("Waiting for confirmation...");
+    const confirmation = await connection.confirmTransaction({
+      signature: txSignature,
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    });
+
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    console.log(`✅ Transaction successful!`);
+    console.log(`🔗 https://explorer.solana.com/tx/${txSignature}?cluster=devnet`);
+
+    return txSignature;
+
   } catch (error) {
-    console.error("Error sending transaction:", error);
+    console.error("🚨 Error in sendSolanaTransaction:", error);
+    throw error;
   }
 }
 
-main();
+module.exports = {
+  sendSolanaTransaction,
+};
+
+// sendSolanaTransaction("F9Sizvm5evmpWN6skqwmFo2UHKBiY6fTBdWtRuFwxQFR","532AY6h9d5qEHBYenLTq51yF994kUFcGMdmQ4x9bGinu")

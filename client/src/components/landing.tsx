@@ -1,5 +1,6 @@
+"use client";
 import React from 'react';
-import { ChevronDown, Github, GitMerge, Globe } from 'lucide-react';
+import { ArrowBigRight, ArrowRight, ChevronDown, Github, GitMerge, Globe } from 'lucide-react';
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 
 export default function LandingPage() {
@@ -9,7 +10,7 @@ export default function LandingPage() {
             <nav className="relative z-20 flex items-center justify-between px-32 py-4  top-0 ">
                 <div className="flex items-center space-x-2">
                     <div className="w-8 h-8 bg-green-500 rounded flex items-center justify-center">
-                        <span className="text-black font-bold text-lg"> <GitMerge/></span>
+                        <span className="text-black font-bold text-lg"> <GitMerge /></span>
                     </div>
                     <span className="text-xl font-medium">OSSage</span>
                 </div>
@@ -31,8 +32,8 @@ export default function LandingPage() {
                         <SignedOut>
                             <SignInButton />
                             <SignUpButton>
-                                <button 
-                                className="bg-green-500 hover:bg-green-600 text-black px-4 py-2 rounded-lg font-medium transition-colors">
+                                <button
+                                    className="bg-green-500 hover:bg-green-600 text-black px-4 py-2 rounded-lg font-medium transition-colors">
                                     Sign Up
                                 </button>
                             </SignUpButton>
@@ -41,7 +42,7 @@ export default function LandingPage() {
                             <UserButton />
                         </SignedIn>
                     </header>
-                    
+
                 </div>
             </nav>
 
@@ -63,19 +64,28 @@ export default function LandingPage() {
                     {/* Web3 heading */}
                     <div className="relative">
                         <h1 className="text-9xl font-bold text-white leading-none">
-                           <Github className=' w-8 h-8 text-green-600  animate-pulse'  /> OPEN <span className=' text-green-400'> SOURCE </span>
+                            <Github className=' w-8 h-8 text-green-600  animate-pulse' /> OPEN <span className=' text-green-400'> SOURCE </span>
                         </h1>
                     </div>
 
                     {/* Description card */}
-                    <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700 rounded-2xl p-6 max-w-sm">
+                    <div className="bg-slate-800/30 backdrop-blur-sm border border-gray-700 rounded-2xl p-6 max-w-sm">
                         <p className="text-gray-300 text-base leading-relaxed mb-6">
-                            Earn interest from various Web3 features using OSSage protocol now
-                        </p>
-                        <button className="flex items-center space-x-2 text-white hover:text-green-400 transition-colors group">
+                            a decentralized protocol that automatically tracks your open-source activity and rewards you with SOL for real, meaningful contributions.                        </p>
+                        <button
+                            onClick={() => window.location.href = '/githubmanager'}
+                            className="flex items-center justify-end space-x-2 text-white hover:text-green-400 transition-colors group">
                             <span>Explore Details</span>
-                            <ChevronDown className="w-4 h-4 transform group-hover:translate-y-1 transition-transform" />
+                            <ArrowRight className="w-5 h-5 transform group-hover:translate-y-1 transition-transform text-slate-400" />
+                            <ArrowRight className="w-5 h-5 transform group-hover:translate-y-1 transition-transform text-slate-400" />
+                            <ArrowRight className="w-5 h-5 transform group-hover:translate-y-1 transition-transform text-slate-400" />
+                            <ArrowRight className="w-5 h-5 transform group-hover:translate-y-1 transition-transform text-slate-400" />
+                            <ArrowRight className="w-5 h-5 transform group-hover:translate-y-1 transition-transform text-slate-400" />
+                            <Github className=' w-5 h-5 text-green-600  animate-pulse' />
+
                         </button>
+
+
                     </div>
                 </div>
 
@@ -125,7 +135,7 @@ export default function LandingPage() {
                 </div>
             </div>
 
-            
+
         </div>
     );
 }

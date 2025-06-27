@@ -10,10 +10,7 @@ const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ;
 
 // Middleware to capture raw body for signature verification
-// app.use(bodyParser.json());
-
 app.use('/webhook', express.raw({ type: 'application/json' }));
-
 
 app.post("/webhook", (req, res) => {
   try {

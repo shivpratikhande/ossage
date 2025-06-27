@@ -3,12 +3,13 @@ const axios = require("axios");
 const cors = require("cors");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const { Connection, PublicKey } = require("@solana/web3.js");
+const SolanaService = require('./solana-service');
 require("dotenv").config();
 
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 
-// Raw body parser for webhook signature verification MUST come before JSON parser
 app.use("/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
@@ -20,27 +21,22 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 
-// Store installation tokens (use Redis/DB in production)
+const solanaConnection = new Connection("https://api.devnet.solana.com");
+const solanaService = new SolanaService(solanaConnection);
+
 const installationTokens = new Map();
 const userInstallations = new Map();
 
-// ====================
-// GitHub App JWT Generator
-// ====================
 function generateAppJWT() {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
-    iat: now - 60, // Issued 60 seconds in the past
-    exp: now + (10 * 60), // Expires in 10 minutes
+    iat: now - 60,
+    exp: now + (10 * 60),
     iss: GITHUB_APP_ID
   };
   
   return jwt.sign(payload, GITHUB_PRIVATE_KEY, { algorithm: 'RS256' });
 }
-
-// ====================
-// Get Installation Access Token
-// ====================
 async function getInstallationToken(installationId) {
   const cached = installationTokens.get(installationId);
   if (cached && cached.expires_at > new Date()) {
@@ -75,11 +71,7 @@ async function getInstallationToken(installationId) {
   }
 }
 
-// ====================
-// GitHub App OAuth (for user identification)
-// ====================
 app.get("/github/connect", (req, res) => {
-  // Updated scope to include read:org for GitHub App installations
   const redirect = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=user:email,read:org`;
   res.redirect(redirect);
 });
@@ -109,22 +101,16 @@ app.get("/github/callback", async (req, res) => {
     const username = userRes.data.login;
     console.log(`🔗 User connected: ${username}`);
 
-    // Get user's app installations
     await getUserInstallations(username, accessToken);
-
-    res.redirect(`${FRONTEND_URL}/?username=${username}`);
+    res.redirect(`${FRONTEND_URL}/githubmanager/?username=${username}`);
   } catch (err) {
     console.error("OAuth error:", err.message);
     res.status(500).send("GitHub OAuth failed");
   }
 });
 
-// ====================
-// Get User's App Installations - Alternative approach
-// ====================
 async function getUserInstallations(username, userToken) {
   try {
-    // First try the user installations endpoint
     const response = await axios.get(
       "https://api.github.com/user/installations",
       {
@@ -146,7 +132,6 @@ async function getUserInstallations(username, userToken) {
   } catch (error) {
     console.error("Failed to get user installations:", error.response?.data || error.message);
     
-    // If user installations fail, try getting all app installations and filter by user
     try {
       console.log("Trying alternative approach - getting all app installations...");
       const appJWT = generateAppJWT();
@@ -160,7 +145,6 @@ async function getUserInstallations(username, userToken) {
         }
       );
 
-      // Filter installations by the current user
       const relevantInstallations = appInstallationsResponse.data.filter(
         installation => installation.account.login === username
       );
@@ -176,38 +160,91 @@ async function getUserInstallations(username, userToken) {
   }
 }
 
-// ====================
-// List Accessible Repositories
-// ====================
+app.post("/wallet/create/:repoFullName", async (req, res) => {
+  try {
+    const repoFullName = decodeURIComponent(req.params.repoFullName);
+    
+    if (solanaService.hasRepositoryWallet(repoFullName)) {
+      return res.status(400).json({ error: "Wallet already exists for this repository" });
+    }
+    
+    const walletInfo = await solanaService.createRepositoryWallet(repoFullName);
+    res.json(walletInfo);
+  } catch (error) {
+    console.error("Failed to create wallet:", error.message);
+    res.status(500).json({ error: "Failed to create wallet" });
+  }
+});
+
+app.get("/wallet/:repoFullName", async (req, res) => {
+  try {
+    const repoFullName = decodeURIComponent(req.params.repoFullName);
+    const walletInfo = solanaService.getRepositoryWallet(repoFullName);
+    
+    if (!walletInfo) {
+      return res.status(404).json({ error: "Wallet not found for this repository" });
+    }
+    
+    const updatedWallet = await solanaService.updateWalletBalance(repoFullName);
+    res.json(updatedWallet || walletInfo);
+  } catch (error) {
+    console.error("Failed to get wallet info:", error.message);
+    res.status(500).json({ error: "Failed to get wallet info" });
+  }
+});
+
+app.post("/wallet/fund/:repoFullName", async (req, res) => {
+  try {
+    const repoFullName = decodeURIComponent(req.params.repoFullName);
+    const result = await solanaService.fundWalletFromFaucet(repoFullName);
+    res.json(result);
+  } catch (error) {
+    console.error("Failed to fund wallet:", error.message);
+    res.status(500).json({ error: "Failed to fund wallet" });
+  }
+});
+
+app.post("/contributor/register", async (req, res) => {
+  try {
+    const { username, solanaAddress } = req.body;
+    
+    if (!username || !solanaAddress) {
+      return res.status(400).json({ error: "Username and Solana address are required" });
+    }
+    
+    try {
+      new PublicKey(solanaAddress);
+    } catch (error) {
+      return res.status(400).json({ error: "Invalid Solana address" });
+    }
+    
+    solanaService.registerContributor(username, solanaAddress);
+    
+    res.json({ 
+      message: "Solana address registered successfully",
+      username,
+      solanaAddress
+    });
+  } catch (error) {
+    console.error("Failed to register contributor:", error.message);
+    res.status(500).json({ error: "Failed to register contributor" });
+  }
+});
+
+app.get("/contributor/:username", (req, res) => {
+  const username = req.params.username;
+  const solanaAddress = solanaService.getContributorAddress(username);
+  
+  if (!solanaAddress) {
+    return res.status(404).json({ error: "Contributor not registered" });
+  }
+  
+  res.json({ username, solanaAddress });
+});
+
 app.get("/github/repos/:username", async (req, res) => {
   const username = req.params.username;
   let installations = userInstallations.get(username) || [];
-  
-  // If no cached installations, try to get them using the app JWT
-  if (installations.length === 0) {
-    try {
-      const appJWT = generateAppJWT();
-      const appInstallationsResponse = await axios.get(
-        "https://api.github.com/app/installations",
-        {
-          headers: {
-            Authorization: `Bearer ${appJWT}`,
-            Accept: "application/vnd.github.v3+json"
-          }
-        }
-      );
-
-      installations = appInstallationsResponse.data.filter(
-        installation => installation.account.login === username
-      );
-      
-      if (installations.length > 0) {
-        userInstallations.set(username, installations);
-      }
-    } catch (error) {
-      console.error("Failed to get installations:", error.response?.data || error.message);
-    }
-  }
   
   if (installations.length === 0) {
     return res.status(404).json({ 
@@ -221,7 +258,6 @@ app.get("/github/repos/:username", async (req, res) => {
     for (const installation of installations) {
       const token = await getInstallationToken(installation.id);
       
-      // Get repositories accessible to this installation
       const repoResponse = await axios.get(
         `https://api.github.com/installation/repositories`,
         {
@@ -232,15 +268,20 @@ app.get("/github/repos/:username", async (req, res) => {
         }
       );
       
-      const repos = repoResponse.data.repositories.map(repo => ({
-        name: repo.name,
-        full_name: repo.full_name,
-        private: repo.private,
-        description: repo.description,
-        updated_at: repo.updated_at,
-        installation_id: installation.id,
-        hasWebhook: true // GitHub Apps automatically receive webhooks
-      }));
+      const repos = repoResponse.data.repositories.map(repo => {
+        const walletInfo = solanaService.getRepositoryWallet(repo.full_name);
+        
+        return {
+          name: repo.name,
+          full_name: repo.full_name,
+          private: repo.private,
+          description: repo.description,
+          updated_at: repo.updated_at,
+          installation_id: installation.id,
+          hasWebhook: true,
+          wallet: walletInfo || null
+        };
+      });
       
       allRepos = allRepos.concat(repos);
     }
@@ -252,62 +293,6 @@ app.get("/github/repos/:username", async (req, res) => {
   }
 });
 
-// ====================
-// GitHub App Installation URL
-// ====================
-app.get("/github/install", (req, res) => {
-  const installUrl = `https://github.com/apps/c-monitor/installations/new`;
-  res.json({ installUrl });
-});
-
-// ====================
-// Check Installation Status - Updated
-// ====================
-app.get("/github/installation/:username", async (req, res) => {
-  const username = req.params.username;
-  let installations = userInstallations.get(username) || [];
-  
-  // If no cached installations, try to get them fresh
-  if (installations.length === 0) {
-    try {
-      const appJWT = generateAppJWT();
-      const appInstallationsResponse = await axios.get(
-        "https://api.github.com/app/installations",
-        {
-          headers: {
-            Authorization: `Bearer ${appJWT}`,
-            Accept: "application/vnd.github.v3+json"
-          }
-        }
-      );
-
-      installations = appInstallationsResponse.data.filter(
-        installation => installation.account.login === username
-      );
-      
-      if (installations.length > 0) {
-        userInstallations.set(username, installations);
-      }
-    } catch (error) {
-      console.error("Failed to get installations for status check:", error.response?.data || error.message);
-    }
-  }
-  
-  res.json({
-    hasInstallation: installations.length > 0,
-    installations: installations.map(inst => ({
-      id: inst.id,
-      target_type: inst.target_type,
-      account: inst.account.login,
-      repository_selection: inst.repository_selection,
-      repositories_count: inst.repository_selection === 'all' ? 'all' : inst.repositories?.length || 0
-    }))
-  });
-});
-
-// ====================
-// Webhook Handler (GitHub App)
-// ====================
 app.post("/webhook", (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
   const payload = req.body;
@@ -317,7 +302,6 @@ app.post("/webhook", (req, res) => {
     return res.status(500).send("Server configuration error");
   }
 
-  // Verify signature
   const expected = `sha256=` + crypto
     .createHmac("sha256", WEBHOOK_SECRET)
     .update(payload)
@@ -342,8 +326,6 @@ app.post("/webhook", (req, res) => {
       return res.json({ message: "pong" });
     } else if (event === "installation") {
       handleInstallationEvent(body);
-    } else if (event === "installation_repositories") {
-      handleInstallationRepositoriesEvent(body);
     }
 
     res.send("OK");
@@ -353,9 +335,6 @@ app.post("/webhook", (req, res) => {
   }
 });
 
-// ====================
-// Handle Installation Events
-// ====================
 function handleInstallationEvent(body) {
   const action = body.action;
   const installation = body.installation;
@@ -364,9 +343,7 @@ function handleInstallationEvent(body) {
   
   if (action === "created") {
     console.log(`✅ GitHub App installed on ${installation.account.login}`);
-    console.log(`   Repository access: ${installation.repository_selection}`);
     
-    // Update cached installations
     const username = installation.account.login;
     const currentInstallations = userInstallations.get(username) || [];
     const updatedInstallations = [...currentInstallations, installation];
@@ -375,29 +352,9 @@ function handleInstallationEvent(body) {
   } else if (action === "deleted") {
     console.log(`❌ GitHub App uninstalled from ${installation.account.login}`);
     installationTokens.delete(installation.id);
-    
-    // Remove from cached installations
-    const username = installation.account.login;
-    const currentInstallations = userInstallations.get(username) || [];
-    const updatedInstallations = currentInstallations.filter(inst => inst.id !== installation.id);
-    userInstallations.set(username, updatedInstallations);
   }
 }
 
-function handleInstallationRepositoriesEvent(body) {
-  const action = body.action;
-  const installation = body.installation;
-  const repos = body.repositories_added || body.repositories_removed || [];
-  
-  console.log(`📁 Repositories ${action} for installation ${installation.id}`);
-  repos.forEach(repo => {
-    console.log(`   ${action === "added" ? "+" : "-"} ${repo.full_name}`);
-  });
-}
-
-// ====================
-// Pull Request Event Handler
-// ====================
 function handlePullRequestEvent(body) {
   const action = body.action;
   const pr = body.pull_request;
@@ -413,16 +370,10 @@ function handlePullRequestEvent(body) {
     const prTitle = pr.title;
 
     console.log(`🔄 PR #${prNumber} merged in ${repository.full_name}`);
-    console.log(`   Title: ${prTitle}`);
-    console.log(`   Author: ${contributor}`);
-    console.log(`   Changes: +${additions} -${deletions} files: ${filesChanged}`);
-    console.log(`   Installation ID: ${installation.id}`);
+    console.log(`   Author: ${contributor}, Changes: +${additions} -${deletions}, Files: ${filesChanged}`);
 
-    // Check if PR qualifies for reward
-    if (additions >= 20 && filesChanged >= 2) {
+    if (additions >= 0 && filesChanged >= 0) {
       console.log(`🎉 REWARD: ${contributor} qualifies for reward!`);
-      console.log(`   ✅ Additions: ${additions} (≥20)`);
-      console.log(`   ✅ Files changed: ${filesChanged} (≥2)`);
       
       rewardContributor(contributor, {
         repository: repository.full_name,
@@ -432,63 +383,35 @@ function handlePullRequestEvent(body) {
         prTitle,
         installation_id: installation.id
       });
-    } else {
-      console.log(`⚠️ No reward: PR by ${contributor} doesn't meet criteria`);
-      console.log(`   Additions: ${additions} (need ≥20)`);
-      console.log(`   Files: ${filesChanged} (need ≥2)`);
     }
-  } else if (action === "opened") {
-    console.log(`📝 New PR #${pr.number} opened by ${pr.user.login} in ${repository.full_name}`);
-  } else if (action === "synchronize") {
-    console.log(`🔄 PR #${pr.number} updated by ${pr.user.login} in ${repository.full_name}`);
   }
 }
 
-// ====================
-// Reward System
-// ====================
-function rewardContributor(username, prData) {
-  console.log(`💰 Rewarding ${username} for PR #${prData.prNumber}`);
+async function rewardContributor(username, prData) {
+  console.log(`💰 Processing reward for ${username}`);
   
   const rewardAmount = calculateReward(prData.additions, prData.filesChanged);
-  console.log(`   Reward amount: ${rewardAmount} points`);
+  const rewardSol = rewardAmount / 10000; // Convert points to SOL
   
-  // Here you could:
-  // 1. Call your reward API
-  // 2. Update database
-  // 3. Send notifications
-  // 4. Create GitHub comment thanking contributor
+  const walletInfo = solanaService.getRepositoryWallet(prData.repository);
+  const contributorAddress = solanaService.getContributorAddress(username);
   
-  createThankYouComment(prData);
-}
-
-async function createThankYouComment(prData) {
-  try {
-    const token = await getInstallationToken(prData.installation_id);
-    const [owner, repo] = prData.repository.split('/');
-    
-    const comment = `🎉 Thank you for your contribution! This PR qualifies for rewards:
-- **Lines added**: ${prData.additions}
-- **Files changed**: ${prData.filesChanged}
-- **Reward points**: ${calculateReward(prData.additions, prData.filesChanged)}
-
-Your contribution makes a difference! 🚀`;
-
-    await axios.post(
-      `https://api.github.com/repos/${prData.repository}/issues/${prData.prNumber}/comments`,
-      { body: comment },
-      {
-        headers: {
-          Authorization: `token ${token}`,
-          Accept: "application/vnd.github.v3+json"
-        }
-      }
-    );
-    
-    console.log(`✅ Thank you comment posted to PR #${prData.prNumber}`);
-  } catch (error) {
-    console.error(`❌ Failed to post comment:`, error.response?.data || error.message);
+  let rewardSent = false;
+  
+  if (walletInfo && contributorAddress) {
+    try {
+      console.log(`🏦 Sending ${rewardSol} SOL reward to ${username}`);
+      
+      const result = await solanaService.sendReward(walletInfo, contributorAddress, rewardSol, prData);
+      rewardSent = true;
+      
+      console.log(`✅ Reward sent successfully: ${result.signature}`);
+    } catch (error) {
+      console.error(`❌ Failed to send reward:`, error.message);
+    }
   }
+  
+  // await createThankYouComment(prData, walletInfo, contributorAddress, rewardSent, rewardSol);
 }
 
 function calculateReward(additions, filesChanged) {
@@ -499,35 +422,23 @@ function calculateReward(additions, filesChanged) {
   return baseReward + additionBonus + fileBonus;
 }
 
-// ====================
-// Health Check
-// ====================
 app.get("/", (req, res) => {
   res.json({ 
     status: "OK", 
-    message: "GitHub App Server Running",
+    message: "GitHub App Server with Enhanced Solana Integration",
     timestamp: new Date().toISOString(),
-    app_id: GITHUB_APP_ID
+    wallets_created: solanaService.getWalletCount(),
+    contributors_registered: solanaService.getContributorCount()
   });
 });
 
-// ====================
-// Error Handling
-// ====================
+
 app.use((err, req, res, next) => {
   console.error("❌ Server error:", err.message);
   res.status(500).json({ error: "Internal server error" });
 });
 
-// ====================
-// Start Server
-// ====================
 app.listen(PORT, () => {
-  console.log(`🚀 GitHub App Server started at http://localhost:${PORT}`);
-  console.log(`📝 Environment check:`);
-  console.log(`   GitHub App ID: ${GITHUB_APP_ID ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   GitHub Private Key: ${GITHUB_PRIVATE_KEY ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   GitHub Client ID: ${GITHUB_CLIENT_ID ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   Webhook Secret: ${WEBHOOK_SECRET ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   Frontend URL: ${FRONTEND_URL || 'http://localhost:3001'}`);
+  console.log(`🚀 Enhanced GitHub App Server started at http://localhost:${PORT}`);
+  console.log(`🏦 Solana Integration: ✅ Enabled (Devnet)`);
 });
