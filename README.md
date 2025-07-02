@@ -1,9 +1,9 @@
-## OSSage
+# 🔁 Autonomous Contribution Reward System (OSSage)
 
-![image](https://github.com/user-attachments/assets/dc6e2456-cb1b-4aa5-bbbf-da7c6eb7cf78)
-# 🔁 Autonomous Contribution Reward System
 
 ### 🌐 Empowering Open Source Contributors with Transparent, Autonomous Rewards
+![image](https://github.com/user-attachments/assets/dc6e2456-cb1b-4aa5-bbbf-da7c6eb7cf78)
+
 
 ---
 
